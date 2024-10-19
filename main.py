@@ -1,98 +1,208 @@
-# Welcome to
-# __________         __    __  .__                               __
-# \______   \_____ _/  |__/  |_|  |   ____   ______ ____ _____  |  | __ ____
-#  |    |  _/\__  \\   __\   __\  | _/ __ \ /  ___//    \\__  \ |  |/ // __ \
-#  |    |   \ / __ \|  |  |  | |  |_\  ___/ \___ \|   |  \/ __ \|    <\  ___/
-#  |________/(______/__|  |__| |____/\_____>______>___|__(______/__|__\\_____>
-#
-# This file can be a nice home for your Battlesnake logic and helper functions.
-#
-# To get you started we've included code to prevent your Battlesnake from moving backwards.
-# For more info see docs.battlesnake.com
-
 import random
 import typing
+import heapq
+from collections import deque
+import time
 
+MAX_DEPTH = 3  # Depth of the minimax search tree
+TIME_LIMIT = 0.25  # Maximum time in seconds per move
 
-# info is called when you create your Battlesnake on play.battlesnake.com
-# and controls your Battlesnake's appearance
-# TIP: If you open your Battlesnake URL in a browser you should see this data
 def info() -> typing.Dict:
     print("INFO")
-
     return {
         "apiversion": "1",
-        "author": "",  # TODO: Your Battlesnake Username
-        "color": "#888888",  # TODO: Choose color
-        "head": "default",  # TODO: Choose head
-        "tail": "default",  # TODO: Choose tail
+        "author": "vagias",
+        "color": "#FF0000",  # Hex color for red
+        "head": "space-helmet",
+        "tail": "bolt",
     }
 
-
-# start is called when your Battlesnake begins a game
 def start(game_state: typing.Dict):
-    print("GAME START")
+    print("GAME START", game_state)
 
-
-# end is called when your Battlesnake finishes a game
 def end(game_state: typing.Dict):
-    print("GAME OVER\n")
+    print("GAME OVER\n", game_state)
 
+# Directions and their respective x, y coordinate changes
+directions = {
+    "up": (0, 1),
+    "down": (0, -1),
+    "left": (-1, 0),
+    "right": (1, 0),
+}
 
-# move is called on every turn and returns your next move
-# Valid moves are "up", "down", "left", or "right"
-# See https://docs.battlesnake.com/api/example-move for available data
 def move(game_state: typing.Dict) -> typing.Dict:
+    start_time = time.time()
 
-    is_move_safe = {"up": True, "down": True, "left": True, "right": True}
+    my_head = game_state["you"]["body"][0]  # Head position
+    my_body = game_state["you"]["body"]  # Body positions
+    health = game_state["you"]["health"]
+    opponents = [snake for snake in game_state['board']['snakes'] if snake['id'] != game_state['you']['id']]
+    board = game_state['board']
 
-    # We've included code to prevent your Battlesnake from moving backwards
-    my_head = game_state["you"]["body"][0]  # Coordinates of your head
-    my_neck = game_state["you"]["body"][1]  # Coordinates of your "neck"
+    # Get valid moves
+    valid_moves = get_valid_moves(my_head, my_body, opponents, board)
 
-    if my_neck["x"] < my_head["x"]:  # Neck is left of head, don't move left
-        is_move_safe["left"] = False
+    if not valid_moves:
+        # No valid moves, choose a default move
+        print(f"MOVE {game_state['turn']}: No valid moves available! Moving up")
+        return {"move": "up"}
 
-    elif my_neck["x"] > my_head["x"]:  # Neck is right of head, don't move right
-        is_move_safe["right"] = False
+    best_score = float('-inf')
+    best_move = None
 
-    elif my_neck["y"] < my_head["y"]:  # Neck is below head, don't move down
-        is_move_safe["down"] = False
+    for move_direction, new_head in valid_moves.items():
+        new_body = [new_head] + my_body[:-1]  # Simulate moving forward
+        score = minimax(game_state, new_head, new_body, opponents, MAX_DEPTH, False, float('-inf'), float('inf'), start_time)
+        if score > best_score:
+            best_score = score
+            best_move = move_direction
 
-    elif my_neck["y"] > my_head["y"]:  # Neck is above head, don't move up
-        is_move_safe["up"] = False
+        # Time check to prevent timeout
+        if time.time() - start_time > TIME_LIMIT:
+            print("Time limit reached during minimax calculation")
+            break
 
-    # TODO: Step 1 - Prevent your Battlesnake from moving out of bounds
-    # board_width = game_state['board']['width']
-    # board_height = game_state['board']['height']
+    if best_move is None:
+        # Fallback to a random valid move
+        best_move = random.choice(list(valid_moves.keys()))
 
-    # TODO: Step 2 - Prevent your Battlesnake from colliding with itself
-    # my_body = game_state['you']['body']
+    print(f"MOVE {game_state['turn']}: {best_move} with score {best_score}")
+    return {"move": best_move}
 
-    # TODO: Step 3 - Prevent your Battlesnake from colliding with other Battlesnakes
-    # opponents = game_state['board']['snakes']
+def get_valid_moves(head, body, opponents, board):
+    board_width = board['width']
+    board_height = board['height']
+    occupied = get_occupied_positions(body, opponents)
+    valid_moves = {}
+    for direction, (dx, dy) in directions.items():
+        new_x = head['x'] + dx
+        new_y = head['y'] + dy
+        new_head = {'x': new_x, 'y': new_y}
+        if is_safe(new_head, occupied, board_width, board_height):
+            valid_moves[direction] = new_head
+    return valid_moves
 
-    # Are there any safe moves left?
-    safe_moves = []
-    for move, isSafe in is_move_safe.items():
-        if isSafe:
-            safe_moves.append(move)
+def is_safe(position, occupied, board_width, board_height):
+    x, y = position['x'], position['y']
+    if x < 0 or x >= board_width or y < 0 or y >= board_height:
+        return False
+    if (x, y) in occupied:
+        return False
+    return True
 
-    if len(safe_moves) == 0:
-        print(f"MOVE {game_state['turn']}: No safe moves detected! Moving down")
-        return {"move": "down"}
+def get_occupied_positions(my_body, opponents):
+    occupied = set()
+    for segment in my_body[:-1]:  # Exclude tail as it moves
+        occupied.add((segment['x'], segment['y']))
+    for snake in opponents:
+        for segment in snake['body']:
+            occupied.add((segment['x'], segment['y']))
+    return occupied
 
-    # Choose a random move from the safe ones
-    next_move = random.choice(safe_moves)
+def minimax(game_state, my_head, my_body, opponents, depth, is_maximizing_player, alpha, beta, start_time):
+    # Time check
+    if time.time() - start_time > TIME_LIMIT:
+        return evaluate(game_state, my_head, my_body, opponents)
 
-    # TODO: Step 4 - Move towards food instead of random, to regain health and survive longer
-    # food = game_state['board']['food']
+    # Base case: depth limit reached or game over
+    if depth == 0 or is_game_over(my_head, my_body, opponents, game_state['board']):
+        return evaluate(game_state, my_head, my_body, opponents)
 
-    print(f"MOVE {game_state['turn']}: {next_move}")
-    return {"move": next_move}
+    if is_maximizing_player:
+        max_eval = float('-inf')
+        valid_moves = get_valid_moves(my_head, my_body, opponents, game_state['board'])
+        if not valid_moves:
+            return evaluate(game_state, my_head, my_body, opponents)
+        for move_direction, new_head in valid_moves.items():
+            new_body = [new_head] + my_body[:-1]
+            eval = minimax(game_state, new_head, new_body, opponents, depth - 1, False, alpha, beta, start_time)
+            max_eval = max(max_eval, eval)
+            alpha = max(alpha, eval)
+            if beta <= alpha:
+                break  # Beta cutoff
+        return max_eval
+    else:
+        min_eval = float('inf')
+        for opponent in opponents:
+            opponent_head = opponent['body'][0]
+            opponent_body = opponent['body']
+            opponent_board = game_state['board']
+            valid_moves = get_valid_moves(opponent_head, opponent_body, [game_state['you']] + [s for s in opponents if s['id'] != opponent['id']], opponent_board)
+            if not valid_moves:
+                continue  # Skip if opponent has no valid moves
+            for move_direction, new_head in valid_moves.items():
+                new_body = [new_head] + opponent_body[:-1]
+                new_opponent = {'body': new_body, 'id': opponent['id'], 'health': opponent['health']}
+                new_opponents = [new_opponent] + [s for s in opponents if s['id'] != opponent['id']]
+                eval = minimax(game_state, my_head, my_body, new_opponents, depth - 1, True, alpha, beta, start_time)
+                min_eval = min(min_eval, eval)
+                beta = min(beta, eval)
+                if beta <= alpha:
+                    break  # Alpha cutoff
+        return min_eval
 
+def evaluate(game_state, my_head, my_body, opponents):
+    score = 0
 
-# Start server when `python main.py` is run
+    # Survival is the highest priority
+    if is_collision(my_head, my_body, opponents, game_state['board']):
+        return float('-inf')
+
+    # Distance to food
+    food = game_state['board']['food']
+    if food:
+        distances = [manhattan_distance(my_head, f) for f in food]
+        min_distance = min(distances)
+        score -= min_distance * 1.5  # Closer to food is better
+    else:
+        min_distance = 0  # No food, neutral impact
+
+    # Health
+    score += game_state['you']['health'] * 0.5
+
+    # Control of space
+    space = flood_fill(my_head, my_body, opponents, game_state['board'])
+    score += len(space) * 1.0  # More accessible space is better
+
+    # Avoid being close to larger opponents
+    for opponent in opponents:
+        if len(opponent['body']) >= len(my_body):
+            distance = manhattan_distance(my_head, opponent['body'][0])
+            if distance < 3:
+                score -= (3 - distance) * 10  # Penalize proximity to larger snakes
+
+    return score
+
+def is_game_over(my_head, my_body, opponents, board):
+    return is_collision(my_head, my_body, opponents, board)
+
+def is_collision(head, body, opponents, board):
+    occupied = get_occupied_positions(body, opponents)
+    return not is_safe(head, occupied, board['width'], board['height'])
+
+def manhattan_distance(a, b):
+    return abs(a['x'] - b['x']) + abs(a['y'] - b['y'])
+
+def flood_fill(head, my_body, opponents, board):
+    board_width = board['width']
+    board_height = board['height']
+    occupied = get_occupied_positions(my_body, opponents)
+    queue = deque()
+    visited = set()
+    queue.append((head['x'], head['y']))
+    visited.add((head['x'], head['y']))
+
+    while queue:
+        x, y = queue.popleft()
+        for dx, dy in directions.values():
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < board_width and 0 <= ny < board_height:
+                if (nx, ny) not in occupied and (nx, ny) not in visited:
+                    visited.add((nx, ny))
+                    queue.append((nx, ny))
+    return visited
+
 if __name__ == "__main__":
     from server import run_server
 
